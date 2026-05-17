@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Daily Protocol</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font: 'Roboto Mono', 'Menlo', monospace;
+      --gray: #bdbdbd;
+      --dgray: #757575;
+      --light: #eeeeee;
+      --primary: #2bbbad;
+      --error: #ef3744;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: transparent;
+      font-family: var(--font);
+      width: 100%;
+      color: #444;
+    }
+    #container {
+      width: 100%;
+      max-width: 520px;
+      padding: 20px 14px 16px 14px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    .title {
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 0.85rem;
+      color: var(--dgray);
+    }
+    .clock {
+      font-size: 1rem;
+      font-variant-numeric: tabular-nums;
+      color: #222;
+      white-space: nowrap;
+    }
+    .message {
+      font-size: 0.88rem;
+      color: var(--gray);
+      margin: 8px 0 16px 0;
+      line-height: 1.5;
+    }
+    .message.error { color: var(--error); }
+    .timeline-list {
+      display: flex;
+      flex-direction: column;
+      margin-left: 12px;
+      border-left: 2px solid var(--light);
+      padding-bottom: 4px;
+    }
+    .event {
+      position: relative;
+      padding: 0 0 16px 28px;
+      display: flex;
+      align-items: flex-start;
+    }
+    .event:last-child { padding-bottom: 2px; }
+    .event::before {
+      content: '';
+      position: absolute;
+      left: -6px;
+      top: 5px;
+      width: 10px;
+      height: 10px;
+      background: #fff;
+      border: 2px solid var(--gray);
+      border-radius: 50%;
+      z-index: 1;
+    }
+    .event.is-now::before  { background: var(--primary); border-color: var(--primary); }
+    .event.is-past::before { border-color: var(--light); }
+
+    .event-info { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+    .event-time {
+      font-size: 0.78rem;
+      color: var(--gray);
+      letter-spacing: 0.02em;
+    }
+    .event.is-now .event-time  { color: var(--primary); }
+    .event.is-past .event-time { color: var(--light); }
+
+    .event-title {
+      font-size: 0.97rem;
+      color: #444;
+      font-weight: 400;
+      line-height: 1.3;
+    }
+    .event.is-now .event-title  { color: var(--primary); font-weight: 500; }
+    .event.is-past .event-title { color: var(--gray); text-decoration: line-through; text-decoration-color: var(--light); }
+
+    .no-events {
+      color: var(--gray);
+      font-size: 0.9rem;
+      padding: 4px 0 0 28px;
+    }
+    .refresh-note {
+      margin-top: 18px;
+      font-size: 0.72rem;
+      color: #ddd;
+      letter-spacing: 0.03em;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div class="header">
+      <div class="title">Daily Protocol</div>
+      <div class="clock" id="clock"></div>
+    </div>
+    <div class="message" id="message">loading...</div>
+    <div class="timeline-list" id="timeline" style="display:none;"></div>
+    <div class="refresh-note" id="refresh-note"></div>
+  </div>
+
+  <script>
+    // ── IMPORTANT: Replace this with your Cloudflare Worker URL ──────────────
+    const WORKER_URL = 'https://daily-protocol.lunxjiang.workers.dev/'; // e.g. https://daily-protocol.yourname.workers.dev
+
+    // ── Clock ─────────────────────────────────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const h = now.getHours();
+      document.getElementById('clock').textContent =
+        `${h % 12 || 12}:${pad(now.getMinutes())}:${pad(now.getSeconds())} ${h < 12 ? 'am' : 'pm'}`;
+    }
+    setInterval(updateClock, 500);
+    updateClock();
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function formatTime(date) {
+      const h = date.getHours();
+      const m = String(date.getMinutes()).padStart(2, '0');
+      return `${h % 12 || 12}:${m}${h < 12 ? 'am' : 'pm'}`;
+    }
+
+    function setMessage(msg, isError = false) {
+      const el = document.getElementById('message');
+      el.textContent = msg;
+      el.className = 'message' + (isError ? ' error' : '');
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    // ── Fetch & render ────────────────────────────────────────────────────────
+    async function loadEvents() {
+      try {
+        const resp = await fetch(WORKER_URL + '/events');
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            setMessage('Not connected. Please open auth.html to sign in.', true);
+          } else {
+            setMessage('Error loading events: ' + (data.error || resp.status), true);
+          }
+          document.getElementById('timeline').style.display = 'none';
+          return;
+        }
+
+        setMessage('');
+        renderTimeline(data.events || []);
+
+        // Show last updated time
+        const now = new Date();
+        document.getElementById('refresh-note').textContent =
+          `updated ${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2,'0')}${now.getHours() < 12 ? 'am' : 'pm'}`;
+
+      } catch (e) {
+        setMessage('Cannot reach worker. Check WORKER_URL.', true);
+        document.getElementById('timeline').style.display = 'none';
+      }
+    }
+
+    function renderTimeline(events) {
+      const timeline = document.getElementById('timeline');
+      timeline.innerHTML = '';
+      timeline.style.display = 'flex';
+
+      if (!events.length) {
+        timeline.innerHTML = '<div class="no-events">no events today.</div>';
+        return;
+      }
+
+      const now = new Date();
+
+      events.forEach(ev => {
+        const start = ev.start.dateTime ? new Date(ev.start.dateTime) : new Date(ev.start.date);
+        const end   = ev.end.dateTime   ? new Date(ev.end.dateTime)   : new Date(ev.end.date);
+
+        const isPast = end < now;
+        const isNow  = start <= now && end >= now;
+
+        const timeStr = ev.start.dateTime
+          ? `${formatTime(start)} — ${formatTime(end)}`
+          : 'all day';
+
+        const div = document.createElement('div');
+        div.className = ['event', isPast ? 'is-past' : '', isNow ? 'is-now' : ''].filter(Boolean).join(' ');
+        div.innerHTML = `
+          <div class="event-info">
+            <div class="event-time">${timeStr}</div>
+            <div class="event-title">${ev.summary || '(no title)'}</div>
+          </div>
+        `;
+        timeline.appendChild(div);
+      });
+    }
+
+    // ── Load on start, then refresh every 5 minutes ───────────────────────────
+    loadEvents();
+    setInterval(loadEvents, 5 * 60 * 1000);
+  </script>
+</body>
+</html>
