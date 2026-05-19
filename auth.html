@@ -1,147 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Daily Protocol — Auth</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --primary: #2bbbad;
-      --font: 'Roboto Mono', monospace;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: var(--font);
-      background: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      color: #444;
-    }
-    .card {
-      text-align: center;
-      padding: 48px 40px;
-      max-width: 420px;
-      width: 100%;
-    }
-    .title {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: #aaa;
-      margin-bottom: 32px;
-    }
-    .status {
-      font-size: 1rem;
-      margin-bottom: 28px;
-      min-height: 1.4em;
-      color: #555;
-    }
-    .status.success { color: var(--primary); }
-    .status.error   { color: #ef3744; }
-    button {
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      padding: 10px 28px;
-      font-family: var(--font);
-      font-size: 0.95rem;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    button:hover   { background: #14a487; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .note {
-      margin-top: 24px;
-      font-size: 0.78rem;
-      color: #bbb;
-      line-height: 1.6;
-    }
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; text-align: center; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 8px; border: 1px solid #ccc; background: #fff; }
+    button:hover { background: #f4f4f4; }
+    #status { margin-top: 20px; font-size: 14px; color: #555; }
+    .ok { color: #2a7a2a; }
+    .err { color: #b00; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="title">Daily Protocol — One-Time Auth</div>
-    <div class="status" id="status">Click below to connect your Google Calendar.</div>
-    <button id="auth-btn" disabled>Connect Google Calendar</button>
-    <div class="note">
-      You only need to do this once per hour.<br>
-      After connecting, your Notion widget will update automatically.
-    </div>
-  </div>
-
-  <!-- IMPORTANT: Replace YOUR_WORKER_URL below with your Cloudflare Worker URL -->
-  <script>
-    const WORKER_URL = 'https://daily-protocol.lunxjiang.workers.dev'; // e.g. https://daily-protocol.yourname.workers.dev
-    const CLIENT_ID  = '788943371871-n713sgr9t3oifkev2abln7615eulgbv4.apps.googleusercontent.com';
-    const SCOPES     = 'https://www.googleapis.com/auth/calendar.readonly';
-  </script>
-
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
+  <h1>Daily Protocol — Auth</h1>
+  <p>Connect your Google Calendar. You only need to do this <strong>once</strong>.</p>
+  <button id="connect">Connect Google Calendar</button>
+  <div id="status"></div>
 
   <script>
-    let tokenClient = null;
+    // ── CONFIG ────────────────────────────────────────────────────────────
+    const CLIENT_ID    = '788943371871-n713sgr9t3oifkev2abln7615eulgbv4.apps.googleusercontent.com';
+    const REDIRECT_URI = 'https://jianglx254.github.io/daily-protocol/auth.html';
+    const WORKER_URL   = 'https://daily-protocol.lunxjiang.workers.dev/; // <-- CHANGE THIS
+    const SCOPE        = 'https://www.googleapis.com/auth/calendar.readonly';
 
-    function setStatus(msg, type = '') {
-      const el = document.getElementById('status');
-      el.textContent = msg;
-      el.className = 'status ' + type;
-    }
+    const statusEl = document.getElementById('status');
+    const btn = document.getElementById('connect');
 
-    function waitFor(check, cb) {
-      if (check()) { cb(); return; }
-      setTimeout(() => waitFor(check, cb), 100);
-    }
+    // ── Step 1: button kicks off OAuth ────────────────────────────────────
+    btn.addEventListener('click', () => {
+      const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+      authUrl.searchParams.set('client_id', CLIENT_ID);
+      authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('scope', SCOPE);
+      authUrl.searchParams.set('access_type', 'offline');  // needed for refresh token
+      authUrl.searchParams.set('prompt', 'consent');       // forces refresh token re-issue
+      window.location.href = authUrl.toString();
+    });
 
-    waitFor(
-      () => typeof google !== 'undefined' && google.accounts,
-      () => {
-        tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: CLIENT_ID,
-          scope: SCOPES,
-          callback: async (resp) => {
-            if (resp.error) {
-              setStatus('Authentication failed: ' + resp.error, 'error');
-              return;
-            }
+    // ── Step 2: when Google redirects back with ?code=..., send to Worker ─
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const error = params.get('error');
 
-            setStatus('Sending token to worker...', '');
-
-            try {
-              const r = await fetch(WORKER_URL + '/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: resp.access_token })
-              });
-
-              if (r.ok) {
-                setStatus('✓ Connected! Your Notion widget will now show events.', 'success');
-              } else {
-                setStatus('Failed to save token. Check worker URL.', 'error');
-              }
-            } catch (e) {
-              setStatus('Could not reach worker. Check WORKER_URL.', 'error');
-            }
-          }
-        });
-
-        document.getElementById('auth-btn').disabled = false;
-        setStatus('Click below to connect your Google Calendar.');
-      }
-    );
-
-    document.getElementById('auth-btn').addEventListener('click', () => {
-      if (WORKER_URL === 'YOUR_WORKER_URL') {
-        setStatus('Please set your WORKER_URL in the code first.', 'error');
+      if (error) {
+        statusEl.textContent = 'Auth error: ' + error;
+        statusEl.className = 'err';
         return;
       }
-      setStatus('Opening Google sign-in...');
-      tokenClient.requestAccessToken({ prompt: 'consent' });
-    });
+      if (!code) return;
+
+      statusEl.textContent = 'Exchanging code with Worker...';
+      try {
+        const resp = await fetch(WORKER_URL + '/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          statusEl.innerHTML = '✅ Connected! You can close this tab.<br>' +
+            (data.hasRefresh ? 'Refresh token saved — no need to re-auth.' : '⚠️ No refresh token received.');
+          statusEl.className = 'ok';
+          // Clean the URL
+          window.history.replaceState({}, '', REDIRECT_URI);
+        } else {
+          statusEl.textContent = 'Exchange failed: ' + JSON.stringify(data);
+          statusEl.className = 'err';
+        }
+      } catch (e) {
+        statusEl.textContent = 'Network error: ' + e.message;
+        statusEl.className = 'err';
+      }
+    })();
   </script>
 </body>
 </html>
