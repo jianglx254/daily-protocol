@@ -19,18 +19,24 @@
       background: transparent;
       font-family: var(--font);
       width: 100%;
+      height: 100%;
       color: #444;
+      overflow: hidden;
     }
     #container {
       width: 100%;
+      height: 100vh;
       max-width: 520px;
-      padding: 20px 14px 16px 14px;
+      padding: 16px 14px 12px 14px;
+      display: flex;
+      flex-direction: column;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 24px;
+      margin-bottom: 12px;
+      flex-shrink: 0;
     }
     .title {
       font-weight: 500;
@@ -45,6 +51,14 @@
       color: #222;
       white-space: nowrap;
     }
+    .next-up {
+      font-size: 0.78rem;
+      color: var(--dgray);
+      margin-bottom: 10px;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
+    }
+    .next-up b { color: var(--primary); font-weight: 500; }
     .message {
       font-size: 0.88rem;
       color: var(--gray);
@@ -52,63 +66,102 @@
       line-height: 1.5;
     }
     .message.error { color: var(--error); }
-    .timeline-list {
-      display: flex;
-      flex-direction: column;
+
+    /* ── Proportional timeline ───────────────────────────────────────── */
+    .timeline {
+      position: relative;
+      flex: 1;
       margin-left: 12px;
       border-left: 2px solid var(--light);
-      padding-bottom: 4px;
+      min-height: 0;
     }
     .event {
-      position: relative;
-      padding: 0 0 16px 28px;
+      position: absolute;
+      left: 0;
+      right: 0;
+      padding-left: 22px;
       display: flex;
-      align-items: flex-start;
+      flex-direction: column;
+      justify-content: center;
+      overflow: hidden;
     }
-    .event:last-child { padding-bottom: 2px; }
     .event::before {
       content: '';
       position: absolute;
-      left: -6px;
-      top: 5px;
+      left: -7px;
+      top: 6px;
       width: 10px;
       height: 10px;
       background: #fff;
       border: 2px solid var(--gray);
       border-radius: 50%;
-      z-index: 1;
+      z-index: 2;
     }
     .event.is-now::before  { background: var(--primary); border-color: var(--primary); }
-    .event.is-past::before { border-color: var(--light); }
-
-    .event-info { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+    .event.is-sleep::before { background: #444; border-color: #444; }
     .event-time {
-      font-size: 0.78rem;
+      font-size: 0.72rem;
       color: var(--gray);
       letter-spacing: 0.02em;
+      line-height: 1.2;
     }
-    .event.is-now .event-time  { color: var(--primary); }
-    .event.is-past .event-time { color: var(--light); }
-
+    .event.is-now .event-time { color: var(--primary); }
     .event-title {
-      font-size: 0.97rem;
+      font-size: 0.92rem;
       color: #444;
       font-weight: 400;
-      line-height: 1.3;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .event.is-now .event-title  { color: var(--primary); font-weight: 500; }
-    .event.is-past .event-title { color: var(--gray); text-decoration: line-through; text-decoration-color: var(--light); }
+    .event.is-sleep .event-title { color: #444; font-weight: 500; letter-spacing: 0.05em; }
+
+    /* ── "You are here" marker ──────────────────────────────────────── */
+    .now-line {
+      position: absolute;
+      left: -2px;
+      right: 0;
+      height: 2px;
+      background: var(--primary);
+      z-index: 3;
+      pointer-events: none;
+    }
+    .now-line::before {
+      content: '';
+      position: absolute;
+      left: -5px;
+      top: -3px;
+      width: 8px;
+      height: 8px;
+      background: var(--primary);
+      border-radius: 50%;
+    }
+    .now-line::after {
+      content: 'now';
+      position: absolute;
+      right: 4px;
+      top: -8px;
+      font-size: 0.65rem;
+      color: var(--primary);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: #fff;
+      padding: 0 4px;
+    }
 
     .no-events {
       color: var(--gray);
       font-size: 0.9rem;
-      padding: 4px 0 0 28px;
+      padding: 4px 0 0 22px;
     }
     .refresh-note {
-      margin-top: 18px;
-      font-size: 0.72rem;
+      margin-top: 8px;
+      font-size: 0.7rem;
       color: #ddd;
       letter-spacing: 0.03em;
+      flex-shrink: 0;
     }
   </style>
 </head>
@@ -118,15 +171,18 @@
       <div class="title">Daily Protocol</div>
       <div class="clock" id="clock"></div>
     </div>
+    <div class="next-up" id="next-up"></div>
     <div class="message" id="message">loading...</div>
-    <div class="timeline-list" id="timeline" style="display:none;"></div>
+    <div class="timeline" id="timeline" style="display:none;"></div>
     <div class="refresh-note" id="refresh-note"></div>
   </div>
-
   <script>
-    // ── IMPORTANT: Replace this with your Cloudflare Worker URL ──────────────
     const WORKER_URL = 'https://daily-protocol.lunxjiang.workers.dev';
-    // ── Clock ─────────────────────────────────────────────────────────────────
+    const SLEEP_MARKER = '— SLEEP —';
+
+    let cachedEvents = []; // raw events from API, filtered to today's window
+
+    // ── Clock ───────────────────────────────────────────────────────────────
     function updateClock() {
       const now = new Date();
       const pad = n => String(n).padStart(2, '0');
@@ -137,26 +193,30 @@
     setInterval(updateClock, 500);
     updateClock();
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Helpers ─────────────────────────────────────────────────────────────
     function formatTime(date) {
       const h = date.getHours();
       const m = String(date.getMinutes()).padStart(2, '0');
       return `${h % 12 || 12}:${m}${h < 12 ? 'am' : 'pm'}`;
     }
-
     function setMessage(msg, isError = false) {
       const el = document.getElementById('message');
       el.textContent = msg;
       el.className = 'message' + (isError ? ' error' : '');
       el.style.display = msg ? 'block' : 'none';
     }
+    function eventStart(ev) {
+      return ev.start.dateTime ? new Date(ev.start.dateTime) : new Date(ev.start.date);
+    }
+    function eventEnd(ev) {
+      return ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(ev.end.date);
+    }
 
-    // ── Fetch & render ────────────────────────────────────────────────────────
+    // ── Fetch ───────────────────────────────────────────────────────────────
     async function loadEvents() {
       try {
         const resp = await fetch(WORKER_URL + '/events');
         const data = await resp.json();
-
         if (!resp.ok) {
           if (resp.status === 401) {
             setMessage('Not connected. Please open auth.html to sign in.', true);
@@ -166,59 +226,127 @@
           document.getElementById('timeline').style.display = 'none';
           return;
         }
-
         setMessage('');
-        renderTimeline(data.events || []);
 
-        // Show last updated time
+        // Filter: only timed events, only today's window, stop at SLEEP marker
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const todayEnd   = new Date(todayStart.getTime() + 36 * 3600 * 1000);
+
+        const all = (data.events || []).filter(ev => ev.start.dateTime); // skip all-day
+        all.sort((a, b) => eventStart(a) - eventStart(b));
+
+        const todays = [];
+        for (const ev of all) {
+          const s = eventStart(ev);
+          if (s < todayStart || s > todayEnd) continue;
+          todays.push(ev);
+          if ((ev.summary || '').trim() === SLEEP_MARKER) break;
+        }
+        cachedEvents = todays;
+        renderTimeline();
+
         const now = new Date();
         document.getElementById('refresh-note').textContent =
-          `updated ${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2,'0')}${now.getHours() < 12 ? 'am' : 'pm'}`;
-
+          `updated ${formatTime(now)}`;
       } catch (e) {
         setMessage('Cannot reach worker. Check WORKER_URL.', true);
         document.getElementById('timeline').style.display = 'none';
       }
     }
 
-    function renderTimeline(events) {
+    // ── Render: proportional timeline from now → SLEEP ──────────────────────
+    function renderTimeline() {
       const timeline = document.getElementById('timeline');
+      const nextUp = document.getElementById('next-up');
       timeline.innerHTML = '';
-      timeline.style.display = 'flex';
+      timeline.style.display = 'block';
 
-      if (!events.length) {
+      if (!cachedEvents.length) {
         timeline.innerHTML = '<div class="no-events">no events today.</div>';
+        nextUp.textContent = '';
         return;
       }
 
       const now = new Date();
 
-      events.forEach(ev => {
-        const start = ev.start.dateTime ? new Date(ev.start.dateTime) : new Date(ev.start.date);
-        const end   = ev.end.dateTime   ? new Date(ev.end.dateTime)   : new Date(ev.end.date);
+      // Find SLEEP event (or use last event's end as fallback)
+      const sleepEv = cachedEvents.find(ev => (ev.summary || '').trim() === SLEEP_MARKER);
+      const dayEnd = sleepEv ? eventEnd(sleepEv) : eventEnd(cachedEvents[cachedEvents.length - 1]);
 
-        const isPast = end < now;
-        const isNow  = start <= now && end >= now;
+      // Visible window: from now (or first event if it's in the future) → dayEnd
+      const firstStart = eventStart(cachedEvents[0]);
+      const windowStart = now < firstStart ? firstStart : now;
+      const windowEnd = dayEnd;
 
-        const timeStr = ev.start.dateTime
-          ? `${formatTime(start)} — ${formatTime(end)}`
-          : 'all day';
+      if (windowEnd <= windowStart) {
+        timeline.innerHTML = '<div class="no-events">day is over.</div>';
+        nextUp.textContent = '';
+        return;
+      }
+
+      const totalMs = windowEnd - windowStart;
+
+      // Only show events that haven't fully ended yet, and are before SLEEP+1
+      const visible = cachedEvents.filter(ev => eventEnd(ev) > windowStart && eventStart(ev) < windowEnd);
+
+      // Find "next" event (first event starting after now)
+      const upcoming = visible.find(ev => eventStart(ev) > now);
+      if (upcoming) {
+        const mins = Math.round((eventStart(upcoming) - now) / 60000);
+        const label = mins < 1 ? 'starting now'
+                    : mins < 60 ? `in ${mins} min`
+                    : `in ${Math.floor(mins/60)}h ${mins%60}m`;
+        nextUp.innerHTML = `next: <b>${escapeHtml(upcoming.summary || '(untitled)')}</b> · ${label}`;
+      } else {
+        const current = visible.find(ev => eventStart(ev) <= now && eventEnd(ev) > now);
+        if (current) {
+          nextUp.innerHTML = `now: <b>${escapeHtml(current.summary || '(untitled)')}</b>`;
+        } else {
+          nextUp.textContent = '';
+        }
+      }
+
+      // Position each event proportionally
+      visible.forEach(ev => {
+        const s = eventStart(ev);
+        const e = eventEnd(ev);
+        const top = Math.max(0, (s - windowStart) / totalMs) * 100;
+        const height = Math.min(100 - top, (e - Math.max(s, windowStart)) / totalMs * 100);
+
+        const isNow = s <= now && e > now;
+        const isSleep = (ev.summary || '').trim() === SLEEP_MARKER;
 
         const div = document.createElement('div');
-        div.className = ['event', isPast ? 'is-past' : '', isNow ? 'is-now' : ''].filter(Boolean).join(' ');
+        div.className = ['event', isNow ? 'is-now' : '', isSleep ? 'is-sleep' : ''].filter(Boolean).join(' ');
+        div.style.top = top + '%';
+        div.style.height = Math.max(height, 4) + '%'; // minimum 4% for readability
         div.innerHTML = `
-          <div class="event-info">
-            <div class="event-time">${timeStr}</div>
-            <div class="event-title">${ev.summary || '(no title)'}</div>
-          </div>
+          <div class="event-time">${formatTime(s)} — ${formatTime(e)}</div>
+          <div class="event-title">${escapeHtml(ev.summary || '(no title)')}</div>
         `;
         timeline.appendChild(div);
       });
+
+      // "You are here" line
+      if (now >= windowStart && now <= windowEnd) {
+        const pos = (now - windowStart) / totalMs * 100;
+        const line = document.createElement('div');
+        line.className = 'now-line';
+        line.style.top = pos + '%';
+        timeline.appendChild(line);
+      }
     }
 
-    // ── Load on start, then refresh every 5 minutes ───────────────────────────
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
+    // ── Refresh cadences ────────────────────────────────────────────────────
     loadEvents();
-    setInterval(loadEvents, 5 * 60 * 1000);
+    setInterval(loadEvents, 5 * 60 * 1000);   // re-fetch events every 5 min
+    setInterval(renderTimeline, 30 * 1000);   // re-render (moves "now" line, updates countdown) every 30s
   </script>
 </body>
 </html>
