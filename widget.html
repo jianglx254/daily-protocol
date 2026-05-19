@@ -86,6 +86,7 @@
       justify-content: center;
       overflow: hidden;
       flex-shrink: 0;
+      z-index: 2;
     }
     .event::before {
       content: '';
@@ -97,7 +98,7 @@
       background: #fff;
       border: 2px solid var(--gray);
       border-radius: 50%;
-      z-index: 2;
+      z-index: 3;
     }
     .event.is-now::before  { background: var(--primary); border-color: var(--primary); }
     .event.is-past::before { border-color: var(--light); }
@@ -108,7 +109,7 @@
       line-height: 1.2;
     }
     .event.is-now .event-time  { color: var(--primary); }
-    .event.is-past .event-time { color: var(--light); }
+    .event.is-past .event-time { color: var(--gray); }
     .event-title {
       font-size: 0.92rem;
       color: #444;
@@ -134,6 +135,7 @@
       padding: 6px 0 4px 22px;
       flex-shrink: 0;
       margin-top: 4px;
+      z-index: 2;
     }
     .sleep-marker::before {
       content: '';
@@ -145,7 +147,7 @@
       background: #444;
       border: 2px solid #444;
       border-radius: 50%;
-      z-index: 2;
+      z-index: 3;
     }
     .sleep-marker .event-time { font-size: 0.72rem; color: var(--gray); }
     .sleep-marker .event-title {
@@ -162,7 +164,7 @@
       right: 0;
       height: 2px;
       background: var(--primary);
-      z-index: 3;
+      z-index: 1;
       pointer-events: none;
     }
     .now-line::before {
@@ -174,6 +176,7 @@
       height: 8px;
       background: var(--primary);
       border-radius: 50%;
+      z-index: 4;
     }
     .now-line::after {
       content: 'now';
@@ -184,8 +187,8 @@
       color: var(--primary);
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      background: #fff;
       padding: 0 4px;
+      z-index: 4;
     }
 
     .no-events {
