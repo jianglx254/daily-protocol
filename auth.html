@@ -4,78 +4,307 @@
   <meta charset="UTF-8" />
   <title>Daily Protocol — Auth</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; text-align: center; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 8px; border: 1px solid #ccc; background: #fff; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 520px;
+      margin: 60px auto;
+      padding: 20px;
+      color: #333;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; }
+    p  { color: #555; margin-bottom: 16px; line-height: 1.5; }
+    button {
+      padding: 10px 20px;
+      font-size: 15px;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      background: #fff;
+    }
     button:hover { background: #f4f4f4; }
-    #status { margin-top: 20px; font-size: 14px; color: #555; }
-    .ok { color: #2a7a2a; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .primary {
+      background: #2bbbad;
+      color: #fff;
+      border-color: #2bbbad;
+    }
+    .primary:hover { background: #259a8e; }
+    #status { margin: 12px 0; font-size: 14px; }
+    .ok  { color: #2a7a2a; }
     .err { color: #b00; }
+    .section { margin-top: 24px; }
+    .section h2 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+      color: #444;
+    }
+    .cal-list {
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 6px 0;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .cal-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .cal-row:hover { background: #f6f6f6; }
+    .cal-row input { cursor: pointer; }
+    .cal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .cal-name {
+      flex: 1;
+      font-size: 14px;
+    }
+    .cal-name .badge {
+      font-size: 0.7rem;
+      color: #888;
+      margin-left: 6px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .actions {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .save-note {
+      font-size: 0.8rem;
+      color: #888;
+    }
+    .hidden { display: none; }
+    .reauth-link {
+      font-size: 0.8rem;
+      color: #888;
+      margin-top: 16px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
-  <h1>Daily Protocol — Auth</h1>
-  <p>Connect your Google Calendar. You only need to do this <strong>once</strong>.</p>
-  <button id="connect">Connect Google Calendar</button>
+  <h1>Daily Protocol — Settings</h1>
+  <p id="intro">Connect your Google Calendar. You only need to do this <strong>once</strong>.</p>
+
+  <button id="connect" class="primary">Connect Google Calendar</button>
   <div id="status"></div>
 
+  <!-- Calendar picker (shown after auth) -->
+  <div id="picker" class="section hidden">
+    <h2>Select calendars to show in widget</h2>
+    <div id="cal-list" class="cal-list">Loading calendars…</div>
+    <div class="actions">
+      <button id="save" class="primary">Save selection</button>
+      <span class="save-note" id="save-note"></span>
+    </div>
+    <div class="reauth-link" id="reauth">Re-authenticate Google account</div>
+  </div>
+
   <script>
-    // ── CONFIG ────────────────────────────────────────────────────────────
+    // ── CONFIG ──────────────────────────────────────────────────────
     const CLIENT_ID    = '788943371871-n713sgr9t3oifkev2abln7615eulgbv4.apps.googleusercontent.com';
     const REDIRECT_URI = 'https://jianglx254.github.io/daily-protocol/auth.html';
     const WORKER_URL   = 'https://daily-protocol.lunxjiang.workers.dev';
     const SCOPE        = 'https://www.googleapis.com/auth/calendar.readonly';
 
-    const statusEl = document.getElementById('status');
-    const btn = document.getElementById('connect');
+    const statusEl  = document.getElementById('status');
+    const introEl   = document.getElementById('intro');
+    const connectBtn = document.getElementById('connect');
+    const pickerEl  = document.getElementById('picker');
+    const calListEl = document.getElementById('cal-list');
+    const saveBtn   = document.getElementById('save');
+    const saveNote  = document.getElementById('save-note');
+    const reauthEl  = document.getElementById('reauth');
 
-    // ── Step 1: button kicks off OAuth ────────────────────────────────────
-    btn.addEventListener('click', () => {
+    function setStatus(msg, cls = '') {
+      statusEl.textContent = msg;
+      statusEl.className = cls;
+    }
+
+    // ── Step 1: OAuth kickoff ───────────────────────────────────────
+    function startOAuth() {
       const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
       authUrl.searchParams.set('client_id', CLIENT_ID);
       authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
       authUrl.searchParams.set('response_type', 'code');
       authUrl.searchParams.set('scope', SCOPE);
-      authUrl.searchParams.set('access_type', 'offline');  // needed for refresh token
-      authUrl.searchParams.set('prompt', 'consent');       // forces refresh token re-issue
+      authUrl.searchParams.set('access_type', 'offline');
+      authUrl.searchParams.set('prompt', 'consent');
       window.location.href = authUrl.toString();
-    });
+    }
+    connectBtn.addEventListener('click', startOAuth);
+    reauthEl.addEventListener('click', startOAuth);
 
-    // ── Step 2: when Google redirects back with ?code=..., send to Worker ─
+    // ── Step 2: handle OAuth callback or just-load-the-picker ───────
     (async () => {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       const error = params.get('error');
 
       if (error) {
-        statusEl.textContent = 'Auth error: ' + error;
-        statusEl.className = 'err';
+        setStatus('Auth error: ' + error, 'err');
         return;
       }
-      if (!code) return;
 
-      statusEl.textContent = 'Exchanging code with Worker...';
+      // Case A: just returned from Google with a code → exchange it
+      if (code) {
+        setStatus('Exchanging code with Worker…');
+        try {
+          const resp = await fetch(WORKER_URL + '/exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code }),
+          });
+          const data = await resp.json();
+          if (!data.ok) {
+            setStatus('Exchange failed: ' + JSON.stringify(data), 'err');
+            return;
+          }
+          window.history.replaceState({}, '', REDIRECT_URI);
+        } catch (e) {
+          setStatus('Network error: ' + e.message, 'err');
+          return;
+        }
+      }
+
+      // Case B (and continuation of A): check if we have valid auth,
+      // then load the calendar picker.
       try {
-        const resp = await fetch(WORKER_URL + '/exchange', {
+        const sResp = await fetch(WORKER_URL + '/status');
+        const sData = await sResp.json();
+        if (!sData.authenticated) {
+          // Not authed — leave Connect button as-is
+          return;
+        }
+      } catch (e) {
+        setStatus('Cannot reach worker: ' + e.message, 'err');
+        return;
+      }
+
+      // Authed — swap UI to picker mode
+      introEl.textContent = 'Choose which calendars feed into your widget. Changes save when you click Save.';
+      connectBtn.classList.add('hidden');
+      setStatus('✅ Connected', 'ok');
+      pickerEl.classList.remove('hidden');
+      await loadPicker();
+    })();
+
+    // ── Calendar picker logic ───────────────────────────────────────
+    let allCalendars = [];
+    let selectedIds = new Set();
+
+    async function loadPicker() {
+      calListEl.textContent = 'Loading calendars…';
+      try {
+        // Fetch both in parallel
+        const [calResp, selResp] = await Promise.all([
+          fetch(WORKER_URL + '/calendars'),
+          fetch(WORKER_URL + '/selected-calendars'),
+        ]);
+        const calData = await calResp.json();
+        const selData = await selResp.json();
+
+        if (!calResp.ok) {
+          calListEl.textContent = 'Failed to load calendars.';
+          return;
+        }
+
+        allCalendars = calData.calendars || [];
+
+        // If user has never saved a selection, default to primary only.
+        if (selData.ids === null) {
+          selectedIds = new Set(
+            allCalendars.filter(c => c.primary).map(c => c.id)
+          );
+        } else {
+          selectedIds = new Set(selData.ids);
+        }
+
+        renderCalList();
+      } catch (e) {
+        calListEl.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    function renderCalList() {
+      calListEl.innerHTML = '';
+      // Primary first, then alphabetical
+      const sorted = [...allCalendars].sort((a, b) => {
+        if (a.primary && !b.primary) return -1;
+        if (b.primary && !a.primary) return 1;
+        return (a.summary || '').localeCompare(b.summary || '');
+      });
+
+      for (const cal of sorted) {
+        const row = document.createElement('label');
+        row.className = 'cal-row';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = selectedIds.has(cal.id);
+        cb.addEventListener('change', () => {
+          if (cb.checked) selectedIds.add(cal.id);
+          else selectedIds.delete(cal.id);
+          saveNote.textContent = 'unsaved changes';
+          saveNote.style.color = '#b07c00';
+        });
+
+        const dot = document.createElement('span');
+        dot.className = 'cal-dot';
+        dot.style.background = cal.backgroundColor || '#888';
+
+        const name = document.createElement('span');
+        name.className = 'cal-name';
+        name.innerHTML = escapeHtml(cal.summary || '(no name)') +
+          (cal.primary ? '<span class="badge">primary</span>' : '');
+
+        row.appendChild(cb);
+        row.appendChild(dot);
+        row.appendChild(name);
+        calListEl.appendChild(row);
+      }
+    }
+
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      saveNote.textContent = 'saving…';
+      saveNote.style.color = '#888';
+      try {
+        const resp = await fetch(WORKER_URL + '/selected-calendars', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ ids: [...selectedIds] }),
         });
         const data = await resp.json();
         if (data.ok) {
-          statusEl.innerHTML = '✅ Connected! You can close this tab.<br>' +
-            (data.hasRefresh ? 'Refresh token saved — no need to re-auth.' : '⚠️ No refresh token received.');
-          statusEl.className = 'ok';
-          // Clean the URL
-          window.history.replaceState({}, '', REDIRECT_URI);
+          saveNote.textContent = '✓ saved';
+          saveNote.style.color = '#2a7a2a';
         } else {
-          statusEl.textContent = 'Exchange failed: ' + JSON.stringify(data);
-          statusEl.className = 'err';
+          saveNote.textContent = 'save failed';
+          saveNote.style.color = '#b00';
         }
       } catch (e) {
-        statusEl.textContent = 'Network error: ' + e.message;
-        statusEl.className = 'err';
+        saveNote.textContent = 'error: ' + e.message;
+        saveNote.style.color = '#b00';
       }
-    })();
+      saveBtn.disabled = false;
+    });
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
   </script>
 </body>
 </html>
