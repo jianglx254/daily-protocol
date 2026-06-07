@@ -531,7 +531,7 @@
 // =============================================================
 // CONFIG — replace this with YOUR worker URL from Part 3
 // =============================================================
-const WORKER_URL = 'https://task-worker.lunxjiang.workers.dev/';
+const WORKER_URL = 'https://task-worker.lunxjiang.workers.dev';
 
 // User identity
 let userId = new URLSearchParams(location.search).get('user')
@@ -677,11 +677,19 @@ function viewFilter(t) {
   if (currentView === 'overdue') return t.due_date && t.due_date < startOfDay() && !t.done;
   return true;
 }
-
+ 
 async function load() {
-  [groups, tasks, presets] = await Promise.all([
-    api('/groups'), api('/tasks'), api('/presets')
-  ]);
+  try {
+    const [g, t, p] = await Promise.all([
+      api('/groups'), api('/tasks'), api('/presets')
+    ]);
+    groups = Array.isArray(g) ? g : [];
+    tasks = Array.isArray(t) ? t : [];
+    presets = Array.isArray(p) ? p : [];
+  } catch (err) {
+    console.error('Load failed:', err);
+    groups = []; tasks = []; presets = [];
+  }
   render();
 }
 
