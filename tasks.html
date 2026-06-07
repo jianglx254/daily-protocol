@@ -511,6 +511,21 @@
   <div class="main" id="content"></div>
 </div>
 
+<!-- Generic input modal (replaces prompt()) -->
+<div class="modal-backdrop" id="inputModalBackdrop">
+  <div class="modal" style="max-width:400px;">
+    <div style="padding:14px 18px 4px;">
+      <div id="inputModalTitle" style="font-weight:600;font-size:14px;margin-bottom:10px;"></div>
+      <input id="inputModalField" class="modal-input" style="padding:8px 10px;border:1px solid var(--border);border-radius:5px;font-size:14px;" />
+      <input id="inputModalField2" class="modal-input" style="padding:8px 10px;border:1px solid var(--border);border-radius:5px;font-size:14px;margin-top:8px;display:none;" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="inputModalCancel">Cancel</button>
+      <button class="btn primary" id="inputModalOk">OK</button>
+    </div>
+  </div>
+</div>
+ 
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal">
     <input class="modal-input" id="modalTitle" placeholder="Task name" autocomplete="off"/>
@@ -532,6 +547,51 @@
 // CONFIG — replace this with YOUR worker URL from Part 3
 // =============================================================
 const WORKER_URL = 'https://task-worker.lunxjiang.workers.dev';
+
+ // === Custom prompt replacement ===
+function customPrompt({ title, placeholder = '', defaultValue = '', second = null }) {
+  return new Promise((resolve) => {
+    const backdrop = document.getElementById('inputModalBackdrop');
+    const titleEl = document.getElementById('inputModalTitle');
+    const field = document.getElementById('inputModalField');
+    const field2 = document.getElementById('inputModalField2');
+    const ok = document.getElementById('inputModalOk');
+    const cancel = document.getElementById('inputModalCancel');
+
+    titleEl.textContent = title;
+    field.placeholder = placeholder;
+    field.value = defaultValue;
+
+    if (second) {
+      field2.style.display = 'block';
+      field2.placeholder = second.placeholder || '';
+      field2.value = second.defaultValue || '';
+    } else {
+      field2.style.display = 'none';
+    }
+
+    backdrop.classList.add('open');
+    setTimeout(() => field.focus(), 10);
+
+    const cleanup = (result) => {
+      backdrop.classList.remove('open');
+      ok.onclick = null; cancel.onclick = null;
+      field.onkeydown = null;
+      resolve(result);
+    };
+
+    ok.onclick = () => {
+      if (second) cleanup({ value: field.value.trim(), value2: field2.value.trim() });
+      else cleanup(field.value.trim() || null);
+    };
+    cancel.onclick = () => cleanup(null);
+    field.onkeydown = (e) => {
+      if (e.key === 'Enter') ok.click();
+      if (e.key === 'Escape') cancel.click();
+    };
+    if (field2) field2.onkeydown = field.onkeydown;
+  });
+}
 
 // User identity
 let userId = new URLSearchParams(location.search).get('user')
@@ -1059,13 +1119,18 @@ function buildGroupPicker(currentId, onPick) {
   create.className = 'quick-item';
   create.innerHTML = `<span class="icon">+</span><span class="label">New group…</span>`;
   create.onclick = async () => {
-    const name = prompt('Group name:');
-    if (!name) return;
-    const color = prompt('Color (hex):', '#2383e2') || '#2383e2';
-    const { id } = await api('/groups', { method: 'POST', body: JSON.stringify({ name, color }) });
-    groups.push({ id, name, color });
-    onPick(id);
-  };
+  const result = await customPrompt({
+    title: 'New group',
+    placeholder: 'Group name',
+    second: { placeholder: 'Color (hex)', defaultValue: '#2383e2' }
+  });
+  if (!result || !result.value) return;
+  const color = result.value2 || '#2383e2';
+  const { id } = await api('/groups', { method: 'POST', body: JSON.stringify({ name: result.value, color }) });
+  groups.push({ id, name: result.value, color });
+  onPick(id);
+ };
+ 
   list.appendChild(create);
   wrap.appendChild(list);
   return wrap;
@@ -1191,7 +1256,7 @@ function showPresetMenu(presetId, anchorEl) {
       return;
     }
     if (act === 'rename') {
-      const name = prompt('Preset name:', p.name);
+      const name = await customPrompt({ title: 'Rename preset', defaultValue: p.name });
       if (!name) { closePopover(); return; }
       await api('/presets/' + presetId, { method: 'PUT', body: JSON.stringify({ name }) });
     } else if (act === 'default') {
@@ -1296,7 +1361,7 @@ function openFilterPanel() {
     closePopover(); render();
   };
   panel.querySelector('#fpSave').onclick = async () => {
-    const name = prompt('Preset name:');
+    const name = await customPrompt({ title: 'Save preset', placeholder: 'Preset name' });
     if (!name) return;
     await api('/presets', {
       method: 'POST',
@@ -1416,13 +1481,21 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (t.id === 'quickAddBtn') { openQuickAdd(); return; }
+
+
   if (t.id === 'newGroupBtn') {
-    const name = prompt('Group name:');
-    if (!name) return;
-    const color = prompt('Color (hex):', '#2383e2') || '#2383e2';
-    await api('/groups', { method: 'POST', body: JSON.stringify({ name, color }) });
-    load(); return;
-  }
+   const result = await customPrompt({
+     title: 'New group',
+     placeholder: 'Group name',
+     second: { placeholder: 'Color (hex)', defaultValue: '#2383e2' }
+   });
+   if (!result || !result.value) return;
+   const color = result.value2 || '#2383e2';
+   await api('/groups', { method: 'POST', body: JSON.stringify({ name: result.value, color }) });
+   load(); return;
+ }
+
+ 
   if (t.closest('#filterBtn')) {
     if (openPopover) closePopover(); else openFilterPanel();
     return;
