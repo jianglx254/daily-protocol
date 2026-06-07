@@ -623,6 +623,7 @@ function getURLFilters() {
     search: p.get('q') || '',
     hideCompleted: p.get('done') !== '1',
     noDateOnly: p.get('nodate') === '1',
+    snoozedOnly: p.get('snoozed') === '1',   // NEW
   };
 }
 function updateURL(updates) {
@@ -714,9 +715,14 @@ function isVisible(t) {
 
 function viewFilter(t) {
   if (t.parent_id) return false;
-  if (!isVisible(t)) return false;
+  // Snoozed-only view shows ONLY snoozed tasks
+  if (filters.snoozedOnly) {
+    if (!t.snooze_until || t.snooze_until <= Date.now()) return false;
+  } else {
+    if (!isVisible(t)) return false;
+  }
+ 
   if (t.done && filters.hideCompleted) return false;
-
   if (filters.noDateOnly && t.due_date) return false;
 
   if (filters.group) {
@@ -780,8 +786,26 @@ function getSmartPresets() {
   if (counts.p3) smart.push({ id: '__smart_p3', name: 'High priority', icon: '🔥', smart: true, count: counts.p3, filters: { view: 'all', group: null, priority: '3', search: '', hideCompleted: true } });
   if (counts.thisWeek) smart.push({ id: '__smart_week', name: 'This week', icon: '📆', smart: true, count: counts.thisWeek, filters: { view: 'upcoming', group: null, priority: null, search: '', hideCompleted: true } });
   if (counts.noDate) smart.push({ id: '__smart_nodate', name: 'No date', icon: '🚫', smart: true, count: counts.noDate, filters: { view: 'all', group: null, priority: null, search: '', hideCompleted: true }, special: 'no-date' });
+
+  // Count currently snoozed
+ let snoozedCount = 0;
+ for (const t of tasks) {
+   if (t.parent_id || t.done) continue;
+   if (t.snooze_until && t.snooze_until > now) snoozedCount++;
+ }
+ if (snoozedCount) {
+   smart.push({
+     id: '__smart_snoozed',
+     name: 'Snoozed',
+     icon: '💤',
+     smart: true,
+     count: snoozedCount,
+     filters: { view: 'all', group: null, priority: null, search: '', hideCompleted: true },
+     special: 'snoozed-only',
+   });
+ }
   return smart;
-}
+ }
 
 function render() {
   const c = getCounts();
@@ -873,6 +897,7 @@ function renderTask(t, container, isSub = false) {
       <input class="task-title" value="${escapeHtml(t.title)}" data-edit="${t.id}">
       <div class="task-meta">
         ${due ? `<span class="chip ${due.cls}">📅 ${due.text}</span>` : ''}
+        ${t.snooze_until && t.snooze_until > Date.now() ? `<span class="chip" style="color:var(--accent)">💤 until ${new Date(t.snooze_until).toLocaleDateString()}</span>` : ''}
         ${group && currentView !== 'all' ? `<span class="chip group-tag" style="--dot:${group.color}">${escapeHtml(group.name)}</span>` : ''}
         ${t.notes ? `<span class="chip">📝</span>` : ''}
       </div>
@@ -1157,6 +1182,22 @@ function showEmojiPicker(anchorEl, onPick) {
 }
 
 function showTaskMenu(taskId, anchorEl) {
+  function toast(message) {
+   const el = document.createElement('div');
+   el.style.cssText = `
+     position: fixed; bottom: 20px; left: 50%;
+     transform: translateX(-50%);
+     background: var(--text); color: var(--bg);
+     padding: 8px 16px; border-radius: 6px;
+     font-size: 13px; z-index: 1000;
+     box-shadow: var(--shadow);
+     animation: fadeIn 0.2s;
+   `;
+   el.textContent = message;
+   document.body.appendChild(el);
+   setTimeout(() => el.remove(), 2500);
+ }
+
   closePopover();
   const t = tasks.find(x => x.id === taskId);
   if (!t) return;
@@ -1206,8 +1247,14 @@ function showTaskMenu(taskId, anchorEl) {
     }
     let updates = {};
     if (act.startsWith('p')) updates.priority = parseInt(act[1]);
-    else if (act === 'snooze1') updates.snooze_until = Date.now() + 86400000;
-    else if (act === 'snooze7') updates.snooze_until = Date.now() + 7 * 86400000;
+    else if (act === 'snooze1') {
+     updates.snooze_until = Date.now() + 86400000;
+     toast('Snoozed for 1 day. Find in 💤 Snoozed preset.');
+    }
+    else if (act === 'snooze7') {
+     updates.snooze_until = Date.now() + 7 * 86400000;
+     toast('Snoozed for 1 week. Find in 💤 Snoozed preset.');
+    }
     else if (act === 'unsnooze') updates.snooze_until = null;
     else if (act === 'delete') {
       await api('/tasks/' + taskId, { method: 'DELETE' });
@@ -1538,6 +1585,7 @@ document.addEventListener('click', async (e) => {
       search: p.filters.search || '',
       hideCompleted: p.filters.hideCompleted !== false,
       noDateOnly: p.special === 'no-date',
+      snoozedOnly: p.special === 'snoozed-only',  // NEW
     };
     updateURL({
       view: currentView,
@@ -1545,6 +1593,7 @@ document.addEventListener('click', async (e) => {
       q: filters.search || null,
       done: filters.hideCompleted ? null : '1',
       nodate: filters.noDateOnly ? '1' : null,
+      snoozed: filters.snoozedOnly ? '1' : null,  // NEW
     });
     render(); return;
   }
