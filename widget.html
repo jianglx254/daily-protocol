@@ -268,9 +268,23 @@
         const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
         const todayEnd   = new Date(todayStart.getTime() + 36 * 3600 * 1000);
 
-        const all = (data.events || []).filter(ev => ev.start.dateTime);
+        let all = (data.events || []).filter(ev => ev.start.dateTime); // no all-day
+        // Dedupe: identical title + start + end = same event (e.g., showing up
+        // in multiple calendars). Keeps the first occurrence.
+        const seen = new Set();
+        all = all.filter(ev => {
+          const key = [
+            (ev.summary || '').trim().toLowerCase(),
+            ev.start.dateTime,
+            ev.end.dateTime,
+          ].join('|');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        
         all.sort((a, b) => eventStart(a) - eventStart(b));
-
+        
         const todays = [];
         for (const ev of all) {
           const s = eventStart(ev);
