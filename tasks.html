@@ -1427,7 +1427,7 @@ function openFilterPanel() {
 // === Modal ===
 let modalState = { due_date: null, priority: 0, group_id: null, parent_id: null };
 function openQuickAdd(prefill = {}) {
-  modalState = { due_date: null, priority: 0, group_id: null, parent_id: null, ...prefill };
+  modalState = { due_date: endOfDay(), priority: 0, group_id: null, parent_id: null, ...prefill };
   document.getElementById('modalTitle').value = '';
   document.getElementById('modalNotes').value = '';
   updateModalPills();
@@ -1461,7 +1461,7 @@ async function saveQuickAdd() {
     body: JSON.stringify({
       title: parsed.title || raw,
       notes: document.getElementById('modalNotes').value.trim() || null,
-      due_date: modalState.due_date || parsed.due_date,
+      due_date: modalState.due_date || parsed.due_date || endOfDay(),
       priority: modalState.priority || parsed.priority,
       group_id: modalState.group_id,
       parent_id: modalState.parent_id,
