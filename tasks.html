@@ -868,7 +868,8 @@ function renderSection(id, name, color, taskList, root, hideHeader = false) {
       <span class="section-color" style="background:${color}"></span>
       <span class="section-name">${escapeHtml(name)}</span>
       <span class="section-count">${taskList.length}</span>
-    </div>`;
+      ${id ? `<span class="group-menu" data-group-menu="${id}" title="Group options">⋯</span>` : ''}
+      </div>`;
   }
   const body = document.createElement('div');
   body.className = 'section-body';
