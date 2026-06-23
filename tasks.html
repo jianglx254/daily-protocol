@@ -601,12 +601,15 @@ const api = async (path, opts = {}) => {
   return res.json();
 };
 
+
 function parseNL(input) {
   let text = input;
   let due_date = null, priority = 0;
   const pMatch = text.match(/\s(p|!)([123])\b/i);
   if (pMatch) { priority = parseInt(pMatch[2]); text = text.replace(pMatch[0], ''); }
   const now = new Date();
+  const currentYear = now.getFullYear();
+  
   const setDate = (o) => {
     const d = new Date(now); d.setDate(d.getDate() + o);
     d.setHours(23, 59, 0, 0); return d.getTime();
@@ -617,6 +620,17 @@ function parseNL(input) {
     d.setDate(d.getDate() + diff);
     d.setHours(23, 59, 0, 0); return d.getTime();
   };
+  const setMD = (month, day, year) => {
+    // month is 1-12, day is 1-31
+    let y = year || currentYear;
+    const d = new Date(y, month - 1, day, 23, 59, 0);
+    // If no year specified and date is in the past, assume next year
+    if (!year && d.getTime() < startOfDay()) {
+      d.setFullYear(currentYear + 1);
+    }
+    return d.getTime();
+  };
+
   const patterns = [
     { re: /\btoday\b/i, fn: () => setDate(0) },
     { re: /\b(tomorrow|tmrw)\b/i, fn: () => setDate(1) },
@@ -629,6 +643,16 @@ function parseNL(input) {
     { re: /\bfri(day)?\b/i, fn: () => setDay(5) },
     { re: /\bsat(urday)?\b/i, fn: () => setDay(6) },
     { re: /\bsun(day)?\b/i, fn: () => setDay(0) },
+    // M/D/YYYY or M-D-YYYY (full date with year)
+    { re: /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/, fn: (m) => {
+      let y = parseInt(m[3]);
+      if (y < 100) y += 2000; // 24 → 2024
+      return setMD(parseInt(m[1]), parseInt(m[2]), y);
+    }},
+    // M/D or M-D (no year — use current year, or next if past)
+    { re: /\b(\d{1,2})[\/\-](\d{1,2})\b/, fn: (m) =>
+      setMD(parseInt(m[1]), parseInt(m[2]))
+    },
   ];
   for (const p of patterns) {
     const m = text.match(p.re);
@@ -636,7 +660,7 @@ function parseNL(input) {
   }
   return { title: text.trim(), due_date, priority };
 }
-
+ 
 const escapeHtml = s => (s || '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
