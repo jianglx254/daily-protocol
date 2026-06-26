@@ -601,15 +601,23 @@ const api = async (path, opts = {}) => {
   return res.json();
 };
 
-
 function parseNL(input) {
   let text = input;
-  let due_date = null, priority = 0;
+  let due_date = null, priority = 0, group_name = null;
+  
+  // Priority: p1/p2/p3 or !1/!2/!3
   const pMatch = text.match(/\s(p|!)([123])\b/i);
   if (pMatch) { priority = parseInt(pMatch[2]); text = text.replace(pMatch[0], ''); }
+  
+  // Group: #groupname (allows letters, numbers, hyphens, spaces stop it)
+  const gMatch = text.match(/(?:^|\s)#([a-z0-9_-]+)/i);
+  if (gMatch) {
+    group_name = gMatch[1];
+    text = text.replace(gMatch[0], '').trim();
+  }
+  
   const now = new Date();
   const currentYear = now.getFullYear();
-  
   const setDate = (o) => {
     const d = new Date(now); d.setDate(d.getDate() + o);
     d.setHours(23, 59, 0, 0); return d.getTime();
@@ -621,16 +629,11 @@ function parseNL(input) {
     d.setHours(23, 59, 0, 0); return d.getTime();
   };
   const setMD = (month, day, year) => {
-    // month is 1-12, day is 1-31
     let y = year || currentYear;
     const d = new Date(y, month - 1, day, 23, 59, 0);
-    // If no year specified and date is in the past, assume next year
-    if (!year && d.getTime() < startOfDay()) {
-      d.setFullYear(currentYear + 1);
-    }
+    if (!year && d.getTime() < startOfDay()) d.setFullYear(currentYear + 1);
     return d.getTime();
   };
-
   const patterns = [
     { re: /\btoday\b/i, fn: () => setDate(0) },
     { re: /\b(tomorrow|tmrw)\b/i, fn: () => setDate(1) },
@@ -643,13 +646,11 @@ function parseNL(input) {
     { re: /\bfri(day)?\b/i, fn: () => setDay(5) },
     { re: /\bsat(urday)?\b/i, fn: () => setDay(6) },
     { re: /\bsun(day)?\b/i, fn: () => setDay(0) },
-    // M/D/YYYY or M-D-YYYY (full date with year)
     { re: /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/, fn: (m) => {
       let y = parseInt(m[3]);
-      if (y < 100) y += 2000; // 24 → 2024
+      if (y < 100) y += 2000;
       return setMD(parseInt(m[1]), parseInt(m[2]), y);
     }},
-    // M/D or M-D (no year — use current year, or next if past)
     { re: /\b(\d{1,2})[\/\-](\d{1,2})\b/, fn: (m) =>
       setMD(parseInt(m[1]), parseInt(m[2]))
     },
@@ -658,7 +659,7 @@ function parseNL(input) {
     const m = text.match(p.re);
     if (m) { due_date = p.fn(m); text = text.replace(p.re, '').trim(); break; }
   }
-  return { title: text.trim(), due_date, priority };
+  return { title: text.trim(), due_date, priority, group_name };
 }
  
 const escapeHtml = s => (s || '').replace(/[&<>"]/g, c =>
@@ -1534,18 +1535,25 @@ function updateModalPills() {
   if (grp) { g.querySelector('span').textContent = grp.name; g.classList.add('active'); }
   else { g.querySelector('span').textContent = 'Group'; g.classList.remove('active'); }
 }
+
 async function saveQuickAdd() {
   const raw = document.getElementById('modalTitle').value.trim();
   if (!raw) return;
   const parsed = parseNL(raw);
 
   let due_date;
-  if (parsed.due_date) {
-    due_date = parsed.due_date;
-  } else if (modalState.dateExplicitlySet) {
-    due_date = modalState.due_date;
-  } else {
-    due_date = endOfDay();
+  if (parsed.due_date) due_date = parsed.due_date;
+  else if (modalState.dateExplicitlySet) due_date = modalState.due_date;
+  else due_date = endOfDay();
+
+  // Resolve group: explicit pill choice > #shortcut > prefill > none
+  let group_id = modalState.group_id;
+  if (!group_id && parsed.group_name) {
+    const match = groups.find(g =>
+      g.name.toLowerCase() === parsed.group_name.toLowerCase() ||
+      g.name.toLowerCase().replace(/\s+/g, '') === parsed.group_name.toLowerCase()
+    );
+    if (match) group_id = match.id;
   }
 
   await api('/tasks', {
@@ -1555,7 +1563,7 @@ async function saveQuickAdd() {
       notes: document.getElementById('modalNotes').value.trim() || null,
       due_date,
       priority: modalState.priority || parsed.priority,
-      group_id: modalState.group_id,
+      group_id,
       parent_id: modalState.parent_id,
     }),
   });
