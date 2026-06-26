@@ -194,6 +194,9 @@
   .check.p1 { border-color: var(--yellow); }
   .check.p2 { border-color: var(--orange); }
   .check.p3 { border-color: var(--red); background: rgba(224, 62, 62, 0.06); }
+  .check.recurring {
+    border-style: dashed;
+  }
   .check.done { background: var(--text-soft); border-color: var(--text-soft); }
   .check.done::after {
     content: ''; width: 5px; height: 9px;
@@ -533,6 +536,7 @@
       <button class="pill" id="modalDate">📅 <span>Date</span></button>
       <button class="pill" id="modalPriority">⚑ <span>Priority</span></button>
       <button class="pill" id="modalGroup">⊞ <span>Group</span></button>
+      <button class="pill" id="modalRecurrence">🔁 <span>Repeat</span></button>
     </div>
     <div class="modal-footer">
       <button class="btn" id="modalCancel">Cancel</button>
@@ -546,7 +550,6 @@
 // CONFIG — replace with YOUR worker URL (no trailing slash!)
 // =============================================================
 const WORKER_URL = 'https://task-worker.lunxjiang.workers.dev';
-
 let userId = new URLSearchParams(location.search).get('user')
   || localStorage.getItem('userId');
 if (!userId) {
@@ -557,6 +560,10 @@ if (!userId) {
 let groups = [], tasks = [], presets = [];
 let currentView = 'today';
 let collapsedSections = JSON.parse(localStorage.getItem('collapsed') || '[]');
+// One-time migration: drop old non-namespaced keys
+collapsedSections = collapsedSections.filter(k => typeof k === 'string' && k.includes(':'));
+localStorage.setItem('collapsed', JSON.stringify(collapsedSections));
+
 let openPopover = null;
 let sortableInstances = [];
 
@@ -601,21 +608,39 @@ const api = async (path, opts = {}) => {
   return res.json();
 };
 
+const escapeHtml = s => (s || '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function startOfDay(ts = Date.now()) { const d = new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
+function endOfDay(ts = Date.now()) { const d = new Date(ts); d.setHours(23,59,59,999); return d.getTime(); }
+
 function parseNL(input) {
   let text = input;
-  let due_date = null, priority = 0, group_name = null;
-  
-  // Priority: p1/p2/p3 or !1/!2/!3
+  let due_date = null, priority = 0, group_name = null, recurrence = null;
+
   const pMatch = text.match(/\s(p|!)([123])\b/i);
   if (pMatch) { priority = parseInt(pMatch[2]); text = text.replace(pMatch[0], ''); }
-  
-  // Group: #groupname (allows letters, numbers, hyphens, spaces stop it)
+
   const gMatch = text.match(/(?:^|\s)#([a-z0-9_-]+)/i);
-  if (gMatch) {
-    group_name = gMatch[1];
-    text = text.replace(gMatch[0], '').trim();
+  if (gMatch) { group_name = gMatch[1]; text = text.replace(gMatch[0], '').trim(); }
+
+  // Recurrence keywords
+  const recurrencePatterns = [
+    { re: /\b(every day|daily)\b/i, val: 'daily' },
+    { re: /\b(every week|weekly)\b/i, val: 'weekly' },
+    { re: /\b(every weekday|weekdays)\b/i, val: 'weekdays' },
+    { re: /\b(every month|monthly)\b/i, val: 'monthly' },
+    { re: /\bevery (\d+) days?\b/i, val: (m) => `every-${m[1]}-days` },
+  ];
+  for (const r of recurrencePatterns) {
+    const m = text.match(r.re);
+    if (m) {
+      recurrence = typeof r.val === 'function' ? r.val(m) : r.val;
+      text = text.replace(r.re, '').trim();
+      break;
+    }
   }
-  
+
   const now = new Date();
   const currentYear = now.getFullYear();
   const setDate = (o) => {
@@ -659,14 +684,52 @@ function parseNL(input) {
     const m = text.match(p.re);
     if (m) { due_date = p.fn(m); text = text.replace(p.re, '').trim(); break; }
   }
-  return { title: text.trim(), due_date, priority, group_name };
+  return { title: text.trim(), due_date, priority, group_name, recurrence };
 }
- 
-const escapeHtml = s => (s || '').replace(/[&<>"]/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-function startOfDay(ts = Date.now()) { const d = new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
-function endOfDay(ts = Date.now()) { const d = new Date(ts); d.setHours(23,59,59,999); return d.getTime(); }
+// === Recurrence helpers ===
+function nextRecurrence(currentDue, recurrence) {
+  // Returns the next due date (timestamp), based on currentDue and pattern
+  const base = currentDue ? new Date(currentDue) : new Date();
+  base.setHours(23, 59, 0, 0);
+
+  if (recurrence === 'daily') {
+    base.setDate(base.getDate() + 1);
+    return base.getTime();
+  }
+  if (recurrence === 'weekly') {
+    base.setDate(base.getDate() + 7);
+    return base.getTime();
+  }
+  if (recurrence === 'monthly') {
+    base.setMonth(base.getMonth() + 1);
+    return base.getTime();
+  }
+  if (recurrence === 'weekdays') {
+    // Skip weekends
+    do {
+      base.setDate(base.getDate() + 1);
+    } while (base.getDay() === 0 || base.getDay() === 6);
+    return base.getTime();
+  }
+  const m = /^every-(\d+)-days$/.exec(recurrence);
+  if (m) {
+    base.setDate(base.getDate() + parseInt(m[1]));
+    return base.getTime();
+  }
+  return null;
+}
+
+function recurrenceLabel(recurrence) {
+  if (!recurrence) return 'Repeat';
+  if (recurrence === 'daily') return 'Daily';
+  if (recurrence === 'weekly') return 'Weekly';
+  if (recurrence === 'weekdays') return 'Weekdays';
+  if (recurrence === 'monthly') return 'Monthly';
+  const m = /^every-(\d+)-days$/.exec(recurrence);
+  if (m) return `Every ${m[1]} days`;
+  return recurrence;
+}
 
 function formatDue(ts) {
   if (!ts) return null;
@@ -815,11 +878,25 @@ function render() {
         byGroup.get(t.group_id).push(t);
       } else ungrouped.push(t);
     }
-    for (const g of groups) {
-      renderSection(g.id, g.name, g.color, byGroup.get(g.id) || [], root);
-    }
-    if (ungrouped.length || groups.length === 0) {
-      renderSection(null, 'Inbox', 'var(--text-faint)', ungrouped, root);
+
+    // When a group filter is active, only show that group's section
+    if (filters.group) {
+      const g = groups.find(x =>
+        x.id === filters.group ||
+        x.name.toLowerCase() === filters.group.toLowerCase()
+      );
+      if (g) {
+        renderSection(g.id, g.name, g.color, byGroup.get(g.id) || [], root);
+      } else {
+        root.innerHTML = `<div class="empty"><div class="empty-emoji">🔍</div>Group not found.</div>`;
+      }
+    } else {
+      for (const g of groups) {
+        renderSection(g.id, g.name, g.color, byGroup.get(g.id) || [], root);
+      }
+      if (ungrouped.length || groups.length === 0) {
+        renderSection(null, 'Inbox', 'var(--text-faint)', ungrouped, root);
+      }
     }
   } else {
     renderSection(null,
@@ -833,9 +910,10 @@ function render() {
 function renderSection(id, name, color, taskList, root, hideHeader = false) {
   const section = document.createElement('div');
   section.className = 'section';
-  if (collapsedSections.includes(id || 'none')) section.classList.add('collapsed');
+  const sectionKey = (id || 'none') + ':' + currentView;
+  if (!hideHeader && collapsedSections.includes(sectionKey)) section.classList.add('collapsed');
   if (!hideHeader) {
-    section.innerHTML = `<div class="section-header" data-section="${id || 'none'}">
+    section.innerHTML = `<div class="section-header" data-section="${sectionKey}">
       <span class="section-chevron">▾</span>
       <span class="section-color" style="background:${color}"></span>
       <span class="section-name">${escapeHtml(name)}</span>
@@ -864,12 +942,14 @@ function renderTask(t, container, isSub = false) {
   const due = formatDue(t.due_date);
   const group = groups.find(g => g.id === t.group_id);
   const prio = t.priority || 0;
+  const isRecurring = !!t.recurrence;
   div.innerHTML = `
-    <div class="check ${prio ? 'p' + prio : ''} ${t.done ? 'done' : ''}" data-check="${t.id}"></div>
+    <div class="check ${prio ? 'p' + prio : ''} ${isRecurring ? 'recurring' : ''} ${t.done ? 'done' : ''}" data-check="${t.id}" title="${isRecurring ? 'Recurring task — completing bumps the date' : ''}"></div>
     <div class="task-body">
       <input class="task-title" value="${escapeHtml(t.title)}" data-edit="${t.id}">
       <div class="task-meta">
         ${due ? `<span class="chip ${due.cls}">📅 ${due.text}</span>` : ''}
+        ${isRecurring ? `<span class="chip">🔁 ${escapeHtml(recurrenceLabel(t.recurrence))}</span>` : ''}
         ${t.snooze_until && t.snooze_until > Date.now() ? `<span class="chip" style="color:var(--accent)">💤 until ${new Date(t.snooze_until).toLocaleDateString()}</span>` : ''}
         ${group && currentView !== 'all' ? `<span class="chip group-tag" style="--dot:${group.color}">${escapeHtml(group.name)}</span>` : ''}
         ${t.notes ? `<span class="chip">📝</span>` : ''}
@@ -980,7 +1060,6 @@ function updateFilterBtn() {
   if (hasFilters) btn.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
 }
 
-// === Toast ===
 function toast(message) {
   const el = document.createElement('div');
   el.style.cssText = `
@@ -996,7 +1075,6 @@ function toast(message) {
   setTimeout(() => el.remove(), 2500);
 }
 
-// === Custom prompt ===
 function customPrompt({ title, placeholder = '', defaultValue = '', second = null }) {
   return new Promise((resolve) => {
     const backdrop = document.getElementById('inputModalBackdrop');
@@ -1042,7 +1120,6 @@ function customPrompt({ title, placeholder = '', defaultValue = '', second = nul
   });
 }
 
-// === Popovers ===
 function closePopover() {
   if (openPopover) { openPopover.remove(); openPopover = null; }
 }
@@ -1193,6 +1270,46 @@ function buildGroupPicker(currentId, onPick) {
   return wrap;
 }
 
+function buildRecurrencePicker(current, onPick) {
+  const wrap = document.createElement('div');
+  const list = document.createElement('div');
+  list.className = 'quick-list';
+  const options = [
+    { val: null, label: 'No repeat', icon: '🚫' },
+    { val: 'daily', label: 'Daily', icon: '☀️' },
+    { val: 'weekdays', label: 'Weekdays', icon: '💼' },
+    { val: 'weekly', label: 'Weekly', icon: '📆' },
+    { val: 'monthly', label: 'Monthly', icon: '📅' },
+  ];
+  for (const opt of options) {
+    const item = document.createElement('div');
+    item.className = 'quick-item';
+    item.innerHTML = `<span class="icon">${opt.icon}</span>
+      <span class="label">${opt.label}</span>
+      ${current === opt.val ? '<span class="hint">✓</span>' : ''}`;
+    item.onclick = () => onPick(opt.val);
+    list.appendChild(item);
+  }
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:var(--border);margin:4px 0;';
+  list.appendChild(sep);
+  const custom = document.createElement('div');
+  custom.className = 'quick-item';
+  custom.innerHTML = `<span class="icon">⚙️</span><span class="label">Every N days…</span>`;
+  custom.onclick = async () => {
+    const v = await customPrompt({
+      title: 'Repeat every N days',
+      placeholder: 'Number of days (e.g. 3)',
+    });
+    if (!v) return;
+    const n = parseInt(v);
+    if (n > 0) onPick(`every-${n}-days`);
+  };
+  list.appendChild(custom);
+  wrap.appendChild(list);
+  return wrap;
+}
+
 function showEmojiPicker(anchorEl, onPick) {
   closePopover();
   const wrap = document.createElement('div');
@@ -1222,6 +1339,7 @@ function showTaskMenu(taskId, anchorEl) {
   menu.innerHTML = `
     <div class="menu-item" data-act="setdate"><span class="icon">📅</span> Set date…</div>
     <div class="menu-item" data-act="setgroup"><span class="icon">⊞</span> Move to group…</div>
+    <div class="menu-item" data-act="setrecurrence"><span class="icon">🔁</span> Repeat${t.recurrence ? ': ' + recurrenceLabel(t.recurrence) : '…'}</div>
     <div class="menu-separator"></div>
     <div class="menu-item" data-act="p1"><span class="icon" style="color:var(--yellow)">⚑</span> Priority 1 (low)</div>
     <div class="menu-item" data-act="p2"><span class="icon" style="color:var(--orange)">⚑</span> Priority 2 (med)</div>
@@ -1257,6 +1375,13 @@ function showTaskMenu(taskId, anchorEl) {
     if (act === 'setgroup') {
       showPopover(anchorEl, buildGroupPicker(t.group_id, async (gid) => {
         await api('/tasks/' + taskId, { method: 'PUT', body: JSON.stringify({ group_id: gid }) });
+        closePopover(); load();
+      }));
+      return;
+    }
+    if (act === 'setrecurrence') {
+      showPopover(anchorEl, buildRecurrencePicker(t.recurrence, async (rec) => {
+        await api('/tasks/' + taskId, { method: 'PUT', body: JSON.stringify({ recurrence: rec }) });
         closePopover(); load();
       }));
       return;
@@ -1508,9 +1633,9 @@ function openFilterPanel() {
 }
 
 // === Modal ===
-let modalState = { due_date: null, dateExplicitlySet: false, priority: 0, group_id: null, parent_id: null };
+let modalState = { due_date: null, dateExplicitlySet: false, priority: 0, group_id: null, parent_id: null, recurrence: null };
 function openQuickAdd(prefill = {}) {
-  modalState = { due_date: endOfDay(), dateExplicitlySet: false, priority: 0, group_id: null, parent_id: null, ...prefill };
+  modalState = { due_date: endOfDay(), dateExplicitlySet: false, priority: 0, group_id: null, parent_id: null, recurrence: null, ...prefill };
   document.getElementById('modalTitle').value = '';
   document.getElementById('modalNotes').value = '';
   updateModalPills();
@@ -1534,8 +1659,15 @@ function updateModalPills() {
   const grp = groups.find(x => x.id === modalState.group_id);
   if (grp) { g.querySelector('span').textContent = grp.name; g.classList.add('active'); }
   else { g.querySelector('span').textContent = 'Group'; g.classList.remove('active'); }
+  const r = document.getElementById('modalRecurrence');
+  if (modalState.recurrence) {
+    r.querySelector('span').textContent = recurrenceLabel(modalState.recurrence);
+    r.classList.add('active');
+  } else {
+    r.querySelector('span').textContent = 'Repeat';
+    r.classList.remove('active');
+  }
 }
-
 async function saveQuickAdd() {
   const raw = document.getElementById('modalTitle').value.trim();
   if (!raw) return;
@@ -1546,7 +1678,6 @@ async function saveQuickAdd() {
   else if (modalState.dateExplicitlySet) due_date = modalState.due_date;
   else due_date = endOfDay();
 
-  // Resolve group: explicit pill choice > #shortcut > prefill > none
   let group_id = modalState.group_id;
   if (!group_id && parsed.group_name) {
     const match = groups.find(g =>
@@ -1565,6 +1696,7 @@ async function saveQuickAdd() {
       priority: modalState.priority || parsed.priority,
       group_id,
       parent_id: modalState.parent_id,
+      recurrence: modalState.recurrence || parsed.recurrence || null,
     }),
   });
   closeQuickAdd(); load();
@@ -1600,6 +1732,13 @@ document.getElementById('modalGroup').onclick = (e) => {
     modalState.group_id = gid; updateModalPills(); closePopover();
   }));
 };
+document.getElementById('modalRecurrence').onclick = (e) => {
+  e.stopPropagation();
+  if (openPopover) { closePopover(); return; }
+  showPopover(e.currentTarget, buildRecurrencePicker(modalState.recurrence, (rec) => {
+    modalState.recurrence = rec; updateModalPills(); closePopover();
+  }));
+};
 
 // === Main click delegation ===
 document.addEventListener('click', async (e) => {
@@ -1625,7 +1764,23 @@ document.addEventListener('click', async (e) => {
   }
   if (t.dataset.check) {
     const task = tasks.find(x => x.id === t.dataset.check);
-    await api('/tasks/' + t.dataset.check, {
+    if (!task) return;
+
+    // Recurring task: bump date instead of completing
+    if (task.recurrence && !task.done) {
+      const next = nextRecurrence(task.due_date, task.recurrence);
+      if (next) {
+        await api('/tasks/' + task.id, {
+          method: 'PUT',
+          body: JSON.stringify({ due_date: next }),
+        });
+        toast(`🔁 Next: ${formatDue(next).text}`);
+        load(); return;
+      }
+    }
+
+    // Normal toggle
+    await api('/tasks/' + task.id, {
       method: 'PUT', body: JSON.stringify({ done: task.done ? 0 : 1 }),
     });
     load(); return;
