@@ -6,12 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
+    /* ── Design tokens ───────────────────────────────────────────── */
     :root {
       --font: 'Roboto Mono', 'Menlo', monospace;
       --gray: #bdbdbd;
       --dgray: #757575;
       --light: #eeeeee;
-      --primary: #2bbbad;
+      --primary: #2bbbad;   /* teal accent */
       --error: #ef3744;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -31,6 +32,8 @@
       display: flex;
       flex-direction: column;
     }
+
+    /* ── Header ──────────────────────────────────────────────────── */
     .header {
       display: flex;
       justify-content: space-between;
@@ -51,6 +54,8 @@
       color: #222;
       white-space: nowrap;
     }
+
+    /* ── "Next up" label ─────────────────────────────────────────── */
     .next-up {
       font-size: 0.78rem;
       color: var(--dgray);
@@ -60,6 +65,7 @@
       min-height: 1em;
     }
     .next-up b { color: var(--primary); font-weight: 500; }
+
     .message {
       font-size: 0.88rem;
       color: var(--gray);
@@ -68,7 +74,7 @@
     }
     .message.error { color: var(--error); }
 
-    /* ── Timeline (squished gaps, proportional events) ────────────── */
+    /* ── Timeline container ──────────────────────────────────────── */
     .timeline {
       position: relative;
       flex: 1;
@@ -77,14 +83,18 @@
       min-height: 0;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
+
+    /* ── Event block ─────────────────────────────────────────────── */
     .event {
       position: relative;
       padding: 4px 0 4px 22px;
       display: flex;
       flex-direction: column;
-      justify-content: center;
+      justify-content: flex-start;
       flex-shrink: 0;
+      min-height: 36px;
       z-index: 2;
     }
     .event::before {
@@ -101,6 +111,7 @@
     }
     .event.is-now::before  { background: var(--primary); border-color: var(--primary); }
     .event.is-past::before { border-color: var(--light); }
+
     .event-time {
       font-size: 0.72rem;
       color: var(--gray);
@@ -109,6 +120,7 @@
     }
     .event.is-now .event-time  { color: var(--primary); }
     .event.is-past .event-time { color: var(--gray); }
+
     .event-title {
       font-size: 0.92rem;
       color: #444;
@@ -119,16 +131,41 @@
       text-overflow: ellipsis;
     }
     .event.is-now .event-title  { color: var(--primary); font-weight: 500; }
-    .event.is-past .event-title { color: var(--gray); text-decoration: line-through; text-decoration-color: var(--light); }
+    .event.is-past .event-title {
+      color: var(--gray);
+      text-decoration: line-through;
+      text-decoration-color: var(--light);
+    }
 
-    /* Gap spacer between events */
+    /* ── Tomato events: subtle rumble (always animates) ──────────── */
+    @keyframes rumble {
+      0%   { transform: translate(0, 0) rotate(0deg); }
+      10%  { transform: translate(-1.5px, 0.5px) rotate(-0.3deg); }
+      20%  { transform: translate(1.5px, -0.5px) rotate(0.3deg); }
+      30%  { transform: translate(-1px, 1px) rotate(-0.2deg); }
+      40%  { transform: translate(1px, -1px) rotate(0.2deg); }
+      50%  { transform: translate(-1.5px, -0.5px) rotate(-0.3deg); }
+      60%  { transform: translate(1.5px, 0.5px) rotate(0.3deg); }
+      70%  { transform: translate(-1px, 1px) rotate(-0.2deg); }
+      80%  { transform: translate(1px, -1px) rotate(0.2deg); }
+      90%  { transform: translate(-0.5px, 0.5px) rotate(-0.1deg); }
+      100% { transform: translate(0, 0) rotate(0deg); }
+    }
+    .event.is-tomato {
+      animation: rumble 0.45s linear infinite;
+      transform-origin: center;
+      will-change: transform;
+    }
+
+    /* ── Gap spacer between events ───────────────────────────────── */
     .gap {
       flex-shrink: 0;
-      height: 14px;
+      flex-grow: 0;
+      min-height: 10px;
       position: relative;
     }
 
-    /* SLEEP end-of-day marker */
+    /* ── SLEEP marker (compact end-of-day) ───────────────────────── */
     .sleep-marker {
       position: relative;
       padding: 6px 0 4px 22px;
@@ -156,7 +193,7 @@
       letter-spacing: 0.05em;
     }
 
-    /* "You are here" line */
+    /* ── "You are here" horizontal line ──────────────────────────── */
     .now-line {
       position: absolute;
       left: -2px;
@@ -190,6 +227,11 @@
       z-index: 4;
     }
 
+    /* ── Tomato day: now-line goes red ───────────────────────────── */
+    .timeline.has-tomato .now-line          { background: #e53935; }
+    .timeline.has-tomato .now-line::before  { background: #e53935; }
+    .timeline.has-tomato .now-line::after   { color: #e53935; }
+
     .no-events {
       color: var(--gray);
       font-size: 0.9rem;
@@ -215,13 +257,18 @@
     <div class="timeline" id="timeline" style="display:none;"></div>
     <div class="refresh-note" id="refresh-note"></div>
   </div>
+
   <script>
-    const WORKER_URL = 'https://daily-protocol.lunxjiang.workers.dev';
-    const SLEEP_MARKER = '— SLEEP —';
+    // ── Configuration ────────────────────────────────────────────────
+    const WORKER_URL    = 'https://daily-protocol.lunxjiang.workers.dev';
+    const SLEEP_MARKER  = '— SLEEP —';
+    const EVENT_MIN_PX  = 36;
+    const GAP_BASE_PX   = 10;
+    const TOMATO_COLOR_ID = '11';   // Google Calendar's "Tomato" color
 
     let cachedEvents = [];
 
-    // ── Clock ────────────────────────────────────────────────────────
+    // ── Live clock ───────────────────────────────────────────────────
     function updateClock() {
       const now = new Date();
       const pad = n => String(n).padStart(2, '0');
@@ -244,22 +291,29 @@
       el.className = 'message' + (isError ? ' error' : '');
       el.style.display = msg ? 'block' : 'none';
     }
-    function eventStart(ev) { return ev.start.dateTime ? new Date(ev.start.dateTime) : new Date(ev.start.date); }
-    function eventEnd(ev)   { return ev.end.dateTime   ? new Date(ev.end.dateTime)   : new Date(ev.end.date); }
+    function eventStart(ev) {
+      return ev.start.dateTime ? new Date(ev.start.dateTime) : new Date(ev.start.date);
+    }
+    function eventEnd(ev) {
+      return ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(ev.end.date);
+    }
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, c => ({
         '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
       }[c]));
     }
 
-    // ── Fetch ────────────────────────────────────────────────────────
+    // ── Fetch events from Worker ─────────────────────────────────────
     async function loadEvents() {
       try {
         const resp = await fetch(WORKER_URL + '/events');
         const data = await resp.json();
         if (!resp.ok) {
-          if (resp.status === 401) setMessage('Not connected. Please open auth.html to sign in.', true);
-          else setMessage('Error loading events: ' + (data.error || resp.status), true);
+          if (resp.status === 401) {
+            setMessage('Not connected. Please open auth.html to sign in.', true);
+          } else {
+            setMessage('Error loading events: ' + (data.error || resp.status), true);
+          }
           document.getElementById('timeline').style.display = 'none';
           return;
         }
@@ -269,8 +323,9 @@
         const todayEnd   = new Date(todayStart.getTime() + 36 * 3600 * 1000);
 
         let all = (data.events || []).filter(ev => ev.start.dateTime); // no all-day
-        // Dedupe: identical title + start + end = same event (e.g., showing up
-        // in multiple calendars). Keeps the first occurrence.
+
+        // Dedupe: identical title + start + end = same event
+        // (e.g., same event present in multiple selected calendars).
         const seen = new Set();
         all = all.filter(ev => {
           const key = [
@@ -282,9 +337,10 @@
           seen.add(key);
           return true;
         });
-        
+
         all.sort((a, b) => eventStart(a) - eventStart(b));
-        
+
+        // Walk events in order; stop AT and INCLUDE the SLEEP marker.
         const todays = [];
         for (const ev of all) {
           const s = eventStart(ev);
@@ -295,14 +351,15 @@
         cachedEvents = todays;
         renderTimeline();
 
-        document.getElementById('refresh-note').textContent = `updated ${formatTime(new Date())}`;
+        document.getElementById('refresh-note').textContent =
+          `updated ${formatTime(new Date())}`;
       } catch (e) {
         setMessage('Cannot reach worker. Check WORKER_URL.', true);
         document.getElementById('timeline').style.display = 'none';
       }
     }
 
-    // ── Render: events flex-sized by duration, gaps fixed-size ───────
+    // ── Render the timeline ──────────────────────────────────────────
     function renderTimeline() {
       const timeline = document.getElementById('timeline');
       const nextUp = document.getElementById('next-up');
@@ -312,11 +369,17 @@
       if (!cachedEvents.length) {
         timeline.innerHTML = '<div class="no-events">no events today.</div>';
         nextUp.textContent = '';
+        timeline.classList.remove('has-tomato');
         return;
       }
 
       const now = new Date();
       const sleepEv = cachedEvents.find(ev => (ev.summary || '').trim() === SLEEP_MARKER);
+
+      // Tomato (colorId "11") = urgent. Flag the timeline so the "now" line turns red.
+      const hasTomato = cachedEvents.some(ev => ev.colorId === TOMATO_COLOR_ID);
+      timeline.classList.toggle('has-tomato', hasTomato);
+
       const realEvents = cachedEvents.filter(ev => (ev.summary || '').trim() !== SLEEP_MARKER);
 
       if (!realEvents.length) {
@@ -325,8 +388,9 @@
         return;
       }
 
+      // "Next up" header text
       const upcoming = realEvents.find(ev => eventStart(ev) > now);
-      const current = realEvents.find(ev => eventStart(ev) <= now && eventEnd(ev) > now);
+      const current  = realEvents.find(ev => eventStart(ev) <= now && eventEnd(ev) > now);
       if (current) {
         nextUp.innerHTML = `now: <b>${escapeHtml(current.summary || '(untitled)')}</b>`;
       } else if (upcoming) {
@@ -339,20 +403,27 @@
         nextUp.textContent = 'day complete.';
       }
 
-      const MIN_FLEX = 8;
-
+      // Render each event with proportional flex-grow
       realEvents.forEach((ev, idx) => {
         const s = eventStart(ev);
         const e = eventEnd(ev);
         const durMin = Math.max(1, (e - s) / 60000);
         const isPast = e < now;
-        const isNow = s <= now && e > now;
+        const isNow  = s <= now && e > now;
+        const isTomato = ev.colorId === TOMATO_COLOR_ID;
 
         const div = document.createElement('div');
-        div.className = ['event', isPast ? 'is-past' : '', isNow ? 'is-now' : ''].filter(Boolean).join(' ');
-        div.style.flex = `${Math.max(MIN_FLEX, durMin)} 1 0`;
+        div.className = [
+          'event',
+          isPast ? 'is-past' : '',
+          isNow ? 'is-now' : '',
+          isTomato ? 'is-tomato' : ''
+        ].filter(Boolean).join(' ');
+        div.style.flexGrow   = String(durMin);
+        div.style.flexShrink = '0';
+        div.style.flexBasis  = EVENT_MIN_PX + 'px';
         div.dataset.start = s.getTime();
-        div.dataset.end = e.getTime();
+        div.dataset.end   = e.getTime();
         div.innerHTML = `
           <div class="event-time">${formatTime(s)} — ${formatTime(e)}</div>
           <div class="event-title">${escapeHtml(ev.summary || '(no title)')}</div>
@@ -365,14 +436,15 @@
           if (gapMin > 0.5) {
             const gap = document.createElement('div');
             gap.className = 'gap';
+            gap.style.flexBasis = GAP_BASE_PX + 'px';
             gap.dataset.gapStart = e.getTime();
-            gap.dataset.gapEnd = nextStart.getTime();
+            gap.dataset.gapEnd   = nextStart.getTime();
             timeline.appendChild(gap);
           }
         }
       });
 
-      // SLEEP end marker (compact, not proportional)
+      // SLEEP marker
       if (sleepEv) {
         const lastEnd = eventEnd(realEvents[realEvents.length - 1]);
         const sleepStart = eventStart(sleepEv);
@@ -380,8 +452,9 @@
         if (gapMin > 0.5) {
           const gap = document.createElement('div');
           gap.className = 'gap';
+          gap.style.flexBasis = GAP_BASE_PX + 'px';
           gap.dataset.gapStart = lastEnd.getTime();
-          gap.dataset.gapEnd = sleepStart.getTime();
+          gap.dataset.gapEnd   = sleepStart.getTime();
           timeline.appendChild(gap);
         }
         const marker = document.createElement('div');
@@ -393,7 +466,7 @@
         timeline.appendChild(marker);
       }
 
-      // ── "Now" line ─────────────────────────────────────────────────
+      // Position the "now" line
       requestAnimationFrame(() => {
         timeline.querySelectorAll('.now-line').forEach(n => n.remove());
         const tlRect = timeline.getBoundingClientRect();
@@ -401,6 +474,7 @@
         const allRows = Array.from(timeline.children).filter(c =>
           c.classList.contains('event') || c.classList.contains('gap')
         );
+
         let targetTopPx = null;
         for (const row of allRows) {
           const rs = Number(row.dataset.start || row.dataset.gapStart);
@@ -413,6 +487,7 @@
             break;
           }
         }
+
         if (targetTopPx === null) {
           const firstStart = eventStart(realEvents[0]).getTime();
           const lastEnd = eventEnd(realEvents[realEvents.length - 1]).getTime();
@@ -420,6 +495,7 @@
           else if (nowMs > lastEnd) targetTopPx = tlRect.height - 2;
           else return;
         }
+
         const line = document.createElement('div');
         line.className = 'now-line';
         line.style.top = targetTopPx + 'px';
