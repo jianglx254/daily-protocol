@@ -549,7 +549,7 @@
 // =============================================================
 // CONFIG — replace with YOUR worker URL (no trailing slash!)
 // =============================================================
-const WORKER_URL = 'https://task-worker.lunxjiang.workers.dev';
+const WORKER_URL = 'https://YOUR-WORKER.workers.dev';
 
 let userId = new URLSearchParams(location.search).get('user')
   || localStorage.getItem('userId');
@@ -681,7 +681,6 @@ function parseNL(input) {
     },
   ];
 
-  // Look for "by <date>" first (deadline)
   for (const p of datePatterns) {
     const patternSource = p.re.source;
     const withBy = new RegExp('\\bby\\s+(' + patternSource + ')', 'i');
@@ -696,7 +695,6 @@ function parseNL(input) {
     }
   }
 
-  // Then look for do date (any remaining date reference)
   for (const p of datePatterns) {
     const m = text.match(p.re);
     if (m) {
@@ -719,28 +717,16 @@ function nextRecurrence(currentDue, recurrence) {
   const base = currentDue ? new Date(currentDue) : new Date();
   base.setHours(23, 59, 0, 0);
 
-  if (recurrence === 'daily') {
-    base.setDate(base.getDate() + 1);
-    return base.getTime();
-  }
-  if (recurrence === 'weekly') {
-    base.setDate(base.getDate() + 7);
-    return base.getTime();
-  }
-  if (recurrence === 'monthly') {
-    base.setMonth(base.getMonth() + 1);
-    return base.getTime();
-  }
+  if (recurrence === 'daily') { base.setDate(base.getDate() + 1); return base.getTime(); }
+  if (recurrence === 'weekly') { base.setDate(base.getDate() + 7); return base.getTime(); }
+  if (recurrence === 'monthly') { base.setMonth(base.getMonth() + 1); return base.getTime(); }
   if (recurrence === 'weekdays') {
     do { base.setDate(base.getDate() + 1); }
     while (base.getDay() === 0 || base.getDay() === 6);
     return base.getTime();
   }
   const m = /^every-(\d+)-days$/.exec(recurrence);
-  if (m) {
-    base.setDate(base.getDate() + parseInt(m[1]));
-    return base.getTime();
-  }
+  if (m) { base.setDate(base.getDate() + parseInt(m[1])); return base.getTime(); }
   return null;
 }
 
@@ -800,7 +786,6 @@ function viewFilter(t) {
     if (!t.title.toLowerCase().includes(q) && !(t.notes || '').toLowerCase().includes(q)) return false;
   }
 
-  // Today: tasks I plan to do today (do_date <= today), OR tasks due today with no do_date
   if (currentView === 'today') {
     const doToday = t.do_date && t.do_date <= endOfDay();
     const dueTodayNoDo = !t.do_date && t.due_date && t.due_date <= endOfDay();
@@ -982,7 +967,6 @@ function renderTask(t, container, isSub = false) {
   const prio = t.priority || 0;
   const isRecurring = !!t.recurrence;
 
-  // If do_date and due_date are same day, just show the do chip
   const sameDay = t.do_date && t.due_date && startOfDay(t.do_date) === startOfDay(t.due_date);
   const showDo = t.do_date;
   const showDue = t.due_date && !sameDay;
@@ -1165,6 +1149,50 @@ function customPrompt({ title, placeholder = '', defaultValue = '', second = nul
   });
 }
 
+// === Smart positioning: flips up/scrolls if not enough room ===
+function positionMenu(menu, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const margin = 8;
+
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  menu.style.maxHeight = 'none';
+  menu.style.overflowY = 'visible';
+
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+
+  // Horizontal placement
+  let left = rect.right - mw;
+  if (left < margin) left = margin;
+  if (left + mw > vw - margin) left = vw - mw - margin;
+
+  // Vertical placement — prefer below, flip above, otherwise scroll
+  const spaceBelow = vh - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  let top;
+
+  if (mh <= spaceBelow) {
+    top = rect.bottom + 4;
+  } else if (mh <= spaceAbove) {
+    top = rect.top - mh - 4;
+  } else {
+    if (spaceBelow >= spaceAbove) {
+      top = rect.bottom + 4;
+      menu.style.maxHeight = (spaceBelow - 4) + 'px';
+    } else {
+      top = margin;
+      menu.style.maxHeight = (spaceAbove - 4) + 'px';
+    }
+    menu.style.overflowY = 'auto';
+  }
+
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
 function closePopover() {
   if (openPopover) { openPopover.remove(); openPopover = null; }
 }
@@ -1174,18 +1202,7 @@ function showPopover(anchorEl, contentEl) {
   pop.className = 'popover';
   pop.appendChild(contentEl);
   document.body.appendChild(pop);
-  const rect = anchorEl.getBoundingClientRect();
-  pop.style.visibility = 'hidden';
-  const pw = pop.offsetWidth, ph = pop.offsetHeight;
-  let left = rect.left;
-  let top = rect.bottom + 4;
-  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-  if (top + ph > window.innerHeight - 8) top = rect.top - ph - 4;
-  if (top < 8) top = 8;
-  if (left < 8) left = 8;
-  pop.style.left = left + 'px';
-  pop.style.top = top + 'px';
-  pop.style.visibility = 'visible';
+  positionMenu(pop, anchorEl);
   openPopover = pop;
   return pop;
 }
@@ -1365,9 +1382,7 @@ function showEmojiPicker(anchorEl, onPick) {
     ${EMOJI_SET.map(e => `<button class="emoji" data-emoji="${e}">${e}</button>`).join('')}
   </div>`;
   document.body.appendChild(wrap);
-  const rect = anchorEl.getBoundingClientRect();
-  wrap.style.left = Math.min(rect.left, window.innerWidth - 248) + 'px';
-  wrap.style.top = (rect.bottom + 4) + 'px';
+  positionMenu(wrap, anchorEl);
   openPopover = wrap;
   wrap.addEventListener('click', (e) => {
     const b = e.target.closest('[data-emoji]');
@@ -1399,14 +1414,7 @@ function showTaskMenu(taskId, anchorEl) {
     <div class="menu-item" data-act="delete" style="color:var(--red)"><span class="icon">🗑</span> Delete</div>
   `;
   document.body.appendChild(menu);
-  const rect = anchorEl.getBoundingClientRect();
-  const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  let left = Math.min(rect.right - mw, window.innerWidth - mw - 8);
-  let top = rect.bottom + 4;
-  if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
-  if (left < 8) left = 8;
-  menu.style.left = left + 'px';
-  menu.style.top = top + 'px';
+  positionMenu(menu, anchorEl);
   openPopover = menu;
   menu.addEventListener('click', async (e) => {
     const act = e.target.closest('.menu-item')?.dataset.act;
@@ -1473,15 +1481,7 @@ function showGroupMenu(groupId, anchorEl) {
     <div class="menu-item" data-gact="delete" style="color:var(--red)"><span class="icon">🗑</span> Delete group</div>
   `;
   document.body.appendChild(menu);
-
-  const rect = anchorEl.getBoundingClientRect();
-  const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  let left = Math.min(rect.right - mw, window.innerWidth - mw - 8);
-  let top = rect.bottom + 4;
-  if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
-  if (left < 8) left = 8;
-  menu.style.left = left + 'px';
-  menu.style.top = top + 'px';
+  positionMenu(menu, anchorEl);
   openPopover = menu;
 
   menu.addEventListener('click', async (e) => {
@@ -1544,14 +1544,7 @@ function showPresetMenu(presetId, anchorEl) {
     <div class="menu-item" data-pact="delete" style="color:var(--red)"><span class="icon">🗑</span> Delete</div>
   `;
   document.body.appendChild(menu);
-  const rect = anchorEl.getBoundingClientRect();
-  const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  let left = Math.min(rect.left, window.innerWidth - mw - 8);
-  let top = rect.bottom + 4;
-  if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
-  if (left < 8) left = 8;
-  menu.style.left = left + 'px';
-  menu.style.top = top + 'px';
+  positionMenu(menu, anchorEl);
   openPopover = menu;
   menu.addEventListener('click', async (e) => {
     const act = e.target.closest('.menu-item')?.dataset.pact;
@@ -1629,9 +1622,7 @@ function openFilterPanel() {
     </div>
   `;
   document.body.appendChild(panel);
-  const rect = btn.getBoundingClientRect();
-  panel.style.left = Math.max(8, rect.right - panel.offsetWidth) + 'px';
-  panel.style.top = (rect.bottom + 4) + 'px';
+  positionMenu(panel, btn);
   openPopover = panel;
 
   panel.querySelector('#fpGroup').addEventListener('click', (e) => {
@@ -1684,7 +1675,6 @@ function openFilterPanel() {
   };
 }
 
-// === Modal ===
 let modalState = {
   do_date: null,
   due_date: null,
@@ -1862,7 +1852,6 @@ document.addEventListener('click', async (e) => {
     const task = tasks.find(x => x.id === t.dataset.check);
     if (!task) return;
 
-    // Recurring: bump whichever date drives the task
     if (task.recurrence && !task.done) {
       const baseDate = task.do_date || task.due_date;
       const next = nextRecurrence(baseDate, task.recurrence);
