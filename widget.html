@@ -325,16 +325,20 @@
           seen.add(key);
           return true;
         });
-
+        
         all.sort((a, b) => eventStart(a) - eventStart(b));
 
+        const nowMs = Date.now();
         const todays = [];
         for (const ev of all) {
           const s = eventStart(ev);
+          const e = eventEnd(ev);
           if (s < todayStart || s > todayEnd) continue;
+          if (e.getTime() <= nowMs) continue;   // skip fully-ended events
           todays.push(ev);
           if ((ev.summary || '').trim() === SLEEP_MARKER) break;
         }
+        
         cachedEvents = todays;
         renderTimeline();
 
